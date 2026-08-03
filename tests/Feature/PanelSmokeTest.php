@@ -16,7 +16,8 @@ it('renders the server list and view', function () {
     $server = Server::create(['name' => 'ocean1', 'os_version' => '20.04', 'php_versions' => ['8.3']]);
 
     $this->get('/admin/servers')->assertOk()->assertSee('ocean1');
-    $this->get("/admin/servers/{$server->id}")->assertOk();
+    $this->get("/admin/servers/{$server->id}")->assertOk()->assertSee('Connected');
+    $this->get("/admin/servers/{$server->id}/edit")->assertOk()->assertSee('Settings');
 });
 
 it('renders the site list', function () {

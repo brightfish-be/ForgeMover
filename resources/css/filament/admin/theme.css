@@ -1,0 +1,68 @@
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@source '../../../../app/Filament/**/*';
+@source '../../../../resources/views/filament/**/*';
+
+/*
+ * Forge look (DESIGN.md §1–2): flat white cards with a 1px border instead of
+ * shadows, and near-black primary buttons like Forge's "New site".
+ */
+.fi-section {
+    border-radius: 0.75rem;
+    box-shadow: none;
+}
+
+.fi-btn.fi-color-primary:not(.fi-outlined) {
+    background-color: oklch(0.205 0 0); /* Color::Neutral 900 */
+    color: #fff;
+}
+
+.fi-btn.fi-color-primary:not(.fi-outlined):hover {
+    background-color: oklch(0.269 0 0); /* Color::Neutral 800 */
+    color: #fff;
+}
+
+/*
+ * Card-less key-value sidebar on record pages, like Forge's "Details" /
+ * "Networking" columns (DESIGN.md §3.2).
+ */
+.sidebar-plain .fi-section {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    --tw-ring-shadow: 0 0 #0000;
+}
+
+.sidebar-plain .fi-section .fi-section-header,
+.sidebar-plain .fi-section .fi-section-content {
+    padding-inline: 0;
+}
+
+/*
+ * Radio options styled as Forge-like selectable cards — used by the
+ * relocate action's destination-server picker (.server-cards).
+ */
+.server-cards.fi-fo-radio {
+    margin-top: 0 !important;
+    gap: 0.5rem;
+}
+
+.server-cards.fi-fo-radio > .fi-fo-radio-label {
+    border: 1px solid oklch(0.92 0.004 286.32); /* zinc-200 */
+    border-radius: 0.75rem;
+    padding: 0.75rem 1rem;
+    padding-top: 0.75rem !important; /* beats the vendor pt-4 column-layout rule */
+    cursor: pointer;
+    transition: border-color 0.1s ease, background-color 0.1s ease;
+}
+
+.server-cards.fi-fo-radio > .fi-fo-radio-label:hover {
+    border-color: oklch(0.871 0.006 286.286); /* zinc-300 */
+    background-color: oklch(0.985 0 0);
+}
+
+.server-cards.fi-fo-radio > .fi-fo-radio-label:has(.fi-radio-input:checked) {
+    border-color: oklch(0.696 0.17 162.48); /* emerald-500 */
+    background-color: oklch(0.979 0.021 166.113); /* emerald-50 */
+}

@@ -1,6 +1,8 @@
 # ForgeMover
 
-Modern Laravel 13 port of the ForgeOps single-file dashboard: manage the Brightfish
+![](assets/unsplash.mover.jpg)
+
+Modern Laravel 13 port of the ForgeOps single-file dashboard: manage your
 Laravel Forge / DigitalOcean fleet and relocate Laravel sites between servers.
 
 - **Filament v5** admin panel (`/admin`): servers, sites, relocations, package-credential
@@ -28,6 +30,7 @@ live against the API before saving it, create the admin user and run the first s
 ## Running
 
 ```bash
+# using https://github.com/pforret/gloncher
 gloncher gloncher.ini    # web + queue worker + scheduler in one terminal
 ```
 

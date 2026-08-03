@@ -11,10 +11,12 @@ class EditServer extends EditRecord
 {
     protected static string $resource = ServerResource::class;
 
+    protected static ?string $title = 'Settings';
+
     protected function getHeaderActions(): array
     {
         return [
-            ViewAction::make(),
+            ViewAction::make()->color('gray'),
             DeleteAction::make(),
         ];
     }

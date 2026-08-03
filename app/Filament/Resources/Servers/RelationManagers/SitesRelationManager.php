@@ -12,6 +12,6 @@ class SitesRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        return SitesTable::configure($table, showServer: false);
+        return SitesTable::configure($table, showServer: false, compact: true);
     }
 }
