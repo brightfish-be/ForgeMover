@@ -89,6 +89,11 @@
                         </details>
                     @endif
 
+                    {{-- one-line digest: run metrics for script steps, checklist summary for done manual steps --}}
+                    @if ($step['summary'])
+                        <p class="mb-3 text-sm text-gray-500">{{ $step['summary'] }}</p>
+                    @endif
+
                     {{-- actions --}}
                     <div class="flex items-center gap-2">
                         @if ($step['script'])

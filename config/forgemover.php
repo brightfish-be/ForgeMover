@@ -13,13 +13,6 @@ return [
     ],
 
     /*
-     * Directory holding the operational shell scripts (relocate-laravel.sh,
-     * forge_mgt.sh, ...). Defaults to the bin/ folder of the ForgeOps repo
-     * this app lives in.
-     */
-    'bin_path' => env('FORGEMOVER_BIN_PATH', dirname(base_path()).'/bin'),
-
-    /*
      * Default unix user owning /home/<user>/<site> on Forge servers.
      */
     'default_user' => env('FORGEMOVER_DEFAULT_USER', 'forge'),

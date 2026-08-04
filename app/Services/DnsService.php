@@ -28,23 +28,33 @@ class DnsService
         $dig ??= app(SetupStatus::class)->findBinary('dig') ?? 'dig';
         $result = Process::timeout(10)->run([$dig, '+time=3', '+tries=1', ...$args]);
 
-        return trim($result->output());
+        // dig writes warnings like ";; communication error" to stdout — drop
+        // them, or a timeout gets mistaken for a real answer.
+        $lines = array_filter(explode("\n", trim($result->output())),
+            fn (string $line) => $line !== '' && ! str_starts_with(ltrim($line), ';'));
+
+        return implode("\n", $lines);
     }
 
     /** Zone, nameservers, provider, A record + TTL for a site. */
     public function lookup(string $site): array
     {
-        // Walk up labels until we find NS records → that's the zone.
+        // Walk up labels until we find NS records → that's the zone. Parse the
+        // full answer and require type NS: `+short NS` on a CNAMEd name returns
+        // the CNAME target, which is not a nameserver.
         $labels = explode('.', $site);
         $zone = null;
         $nameservers = [];
         for ($i = 0; $i < count($labels) - 1; $i++) {
             $candidate = implode('.', array_slice($labels, $i));
-            $output = $this->dig('+short', 'NS', $candidate);
-            if ($output !== '') {
+            foreach (explode("\n", $this->dig('+noall', '+answer', 'NS', $candidate)) as $line) {
+                $parts = preg_split('/\s+/', trim($line));
+                if (count($parts) >= 5 && $parts[3] === 'NS') {
+                    $nameservers[] = rtrim($parts[4], '.');
+                }
+            }
+            if ($nameservers) {
                 $zone = $candidate;
-                $nameservers = array_values(array_filter(array_map(
-                    fn (string $ns) => rtrim(trim($ns), '.'), explode("\n", $output))));
                 break;
             }
         }
@@ -55,6 +65,7 @@ class DnsService
 
         // Query the authoritative NS for the A record so the TTL is the real one.
         $ip = '';
+        $cname = '';
         $ttl = null;
         $authoritative = false;
         $answer = $this->dig('+noall', '+answer', 'A', $site, '@'.$nameservers[0]);
@@ -69,6 +80,8 @@ class DnsService
                 $ttl ??= (int) $parts[1];
                 if ($parts[3] === 'A') {
                     $ip = $parts[4];
+                } else {
+                    $cname = rtrim($parts[4], '.');
                 }
             }
         }
@@ -78,6 +91,7 @@ class DnsService
             'site' => $site,
             'zone' => $zone,
             'ip' => $ip,
+            'cname' => $cname,
             'ttl' => $ttl,
             'nameservers' => $nameservers,
             'provider' => $this->provider($nameservers),

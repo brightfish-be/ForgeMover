@@ -46,8 +46,15 @@ class WizardData
                 'done_at' => $relocation->checks->firstWhere('step_key', $step->value)?->done_at,
                 'current' => ! $done && $previousDone,
                 'locked' => ! $done && ! $previousDone,
-                'can_run' => $step->isScript() && $previousDone && ! $done && $running === null,
-                'sub_checks' => $this->subChecks($relocation, $step),
+                // done script steps stay runnable — that's the "Run again" button
+                'can_run' => $step->isScript() && $running === null && ($done || $previousDone),
+                'summary' => match (true) {
+                    $step->isScript() => $relocation->runs->where('step', $step->value)->sortByDesc('id')->first()?->summary,
+                    $done => $this->doneSummary($relocation, $step),
+                    default => null,
+                },
+                // a done manual step shows only its one-line summary — skip the sub-check probes
+                'sub_checks' => $done && ! $step->isScript() ? [] : $this->subChecks($relocation, $step),
             ];
             $previousDone = $previousDone && $done;
         }
@@ -104,6 +111,43 @@ class WizardData
         return ['label' => $label, 'status' => 'unknown', 'detail' => $detail];
     }
 
+    /** One-line digest shown instead of the sub-checks once a manual step is done. */
+    protected function doneSummary(Relocation $relocation, RelocationStep $step): ?string
+    {
+        return match ($step) {
+            RelocationStep::Preflight => $this->preflightSummary($relocation),
+            RelocationStep::ForgeSite => 'Site created: '.$relocation->targetSiteName(),
+            RelocationStep::DeployTest => 'Deployed & tested on '.$relocation->targetSiteName(),
+            RelocationStep::Cutover => "DNS cut over — {$relocation->site_name} is live on {$relocation->targetServer->name}",
+            default => null,
+        };
+    }
+
+    protected function preflightSummary(Relocation $relocation): string
+    {
+        $parts = [];
+        if ($php = $this->normalizePhp($this->sourceSite($relocation)?->php_version)) {
+            $parts[] = "PHP {$php}";
+        }
+        $dns = $this->cached($relocation, 'dns', 'dns',
+            fn () => $this->dns->lookup($relocation->site_name), $relocation->site_name);
+        if (($dns['ttl'] ?? null) !== null) {
+            $parts[] = "DNS TTL {$dns['ttl']} sec";
+        }
+        $inventory = $this->cached($relocation, 'inventory', 'inventory',
+            fn () => $this->probe->inventory($relocation->sourceServer->name, $relocation->site_name, $relocation->unix_user));
+        if ($inventory !== null) {
+            $workers = substr_count($inventory, '[program');
+            $parts[] = ($workers ? "{$workers} worker(s)" : 'no workers')
+                .(str_contains($inventory, 'schedule:run') ? ', schedule:run' : ', no schedule');
+        }
+        if ($relocation->sourceServer->compromised) {
+            $parts[] = 'source COMPROMISED — rotate credentials';
+        }
+
+        return implode(' · ', $parts) ?: 'all checks confirmed';
+    }
+
     protected function sourceSite(Relocation $relocation): ?Site
     {
         return Site::where('server_id', $relocation->source_server_id)
@@ -118,10 +162,16 @@ class WizardData
 
     // ── preflight ────────────────────────────────────────────────────────
 
+    /** Forge reports site versions as "PHP 8.3", probes report "8.3" — compare bare versions. */
+    protected function normalizePhp(?string $version): ?string
+    {
+        return $version ? trim(preg_replace('/^php\s*/i', '', $version)) : null;
+    }
+
     protected function checkPhp(Relocation $relocation): array
     {
-        $needed = $this->sourceSite($relocation)?->php_version;
-        $installed = $relocation->targetServer->php_versions ?? [];
+        $needed = $this->normalizePhp($this->sourceSite($relocation)?->php_version);
+        $installed = array_map($this->normalizePhp(...), $relocation->targetServer->php_versions ?? []);
         if (! $needed) {
             return ['label' => 'PHP version on target', 'status' => 'unknown',
                 'detail' => 'Source site PHP version unknown — sync Forge sites first'];
@@ -164,13 +214,22 @@ class WizardData
             return ['label' => 'DNS TTL', 'status' => 'unknown', 'detail' => 'DNS lookup failed'];
         }
         $ttl = $dns['ttl'];
-        $ok = $ttl !== null && $ttl <= 300;
         $manage = $this->dns->manageUrl($dns['provider'], $dns['zone']);
+        $target = $dns['ip'] ? "IP {$dns['ip']}" : (($dns['cname'] ?? '') ? "CNAME → {$dns['cname']}" : '');
+        if ($ttl === null) {
+            return [
+                'label' => "DNS TTL ({$dns['provider']}, zone {$dns['zone']})",
+                'status' => 'unknown',
+                'detail' => 'Could not read the record TTL — check manually'
+                    .($manage ? " · manage: {$manage}" : ''),
+            ];
+        }
+        $ok = $ttl <= 300;
 
         return [
             'label' => "DNS TTL ≤ 300 s ({$dns['provider']}, zone {$dns['zone']})",
             'status' => $ok ? 'pass' : 'fail',
-            'detail' => ($ok ? "TTL {$ttl}s · IP {$dns['ip']}"
+            'detail' => ($ok ? trim("TTL {$ttl}s · {$target}", ' ·')
                 : "TTL is {$ttl}s — lower it to 60–300 s at least 24 h before cutover")
                 .($manage ? " · manage: {$manage}" : ''),
         ];
@@ -240,7 +299,7 @@ class WizardData
 
     protected function checkSitePhp(Relocation $relocation): array
     {
-        $needed = $this->sourceSite($relocation)?->php_version;
+        $needed = $this->normalizePhp($this->sourceSite($relocation)?->php_version);
 
         return ['label' => 'Site PHP version', 'status' => 'unknown',
             'detail' => $needed ? "Select PHP {$needed} when creating the site" : 'Match the source site'];

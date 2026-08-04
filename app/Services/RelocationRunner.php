@@ -17,7 +17,7 @@ use InvalidArgumentException;
 class RelocationRunner
 {
     /** Start a script step; throws when another step is running or the step is manual. */
-    public function start(Relocation $relocation, RelocationStep $step): RelocationRun
+    public function start(Relocation $relocation, RelocationStep $step, bool $now = false): RelocationRun
     {
         if (! $step->isScript()) {
             throw new InvalidArgumentException("{$step->value} is a manual step");
@@ -39,9 +39,9 @@ class RelocationRunner
             'started_at' => now(),
         ]);
 
-        RunRelocationStep::dispatch($run);
+        $now ? RunRelocationStep::dispatchSync($run) : RunRelocationStep::dispatch($run);
 
-        return $run;
+        return $run->refresh();
     }
 
     /** Tick/untick a manual step or sub-check; forge_site's note is the temp domain. */

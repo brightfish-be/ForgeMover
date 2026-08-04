@@ -22,7 +22,7 @@ enum RelocationStep: string
         ];
     }
 
-    /** @return list<self> steps executed by bin/relocate-laravel.sh */
+    /** @return list<self> steps executed remotely by App\Services\RelocationSteps */
     public static function scriptSteps(): array
     {
         return [self::Collect, self::Transfer, self::Restore, self::Verify];
@@ -43,15 +43,6 @@ enum RelocationStep: string
             self::Cutover => ['dnslive'],
             default => [],
         };
-    }
-
-    /**
-     * bashew scripts always exit 0, so success is detected by this marker
-     * appearing in the log output.
-     */
-    public function doneMarker(): string
-    {
-        return $this->value.' done';
     }
 
     public function label(): string

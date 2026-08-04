@@ -55,15 +55,6 @@ class SetupStatus
             'detail' => 'ssh probes use BatchMode host aliases with passwordless keys',
         ];
 
-        $script = rtrim((string) config('forgemover.bin_path'), '/').'/relocate-laravel.sh';
-        $checks[] = [
-            'key' => 'relocate_script',
-            'label' => 'bin/relocate-laravel.sh reachable',
-            'ok' => is_file($script),
-            'required' => false,
-            'detail' => $script.' — set FORGEMOVER_BIN_PATH if it lives elsewhere',
-        ];
-
         $checks[] = [
             'key' => 'forge_token',
             'label' => 'Forge API token configured',

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-ForgeMover manages the Brightfish Laravel Forge / DigitalOcean server fleet and relocates Laravel sites between Forge servers. Laravel 13 + Filament v5 (PHP 8.3), port of a legacy single-file dashboard. The heavy lifting is done by shell scripts (`relocate-laravel.sh`, bashew-style) that live outside this app — by default in `../bin` relative to the app root (`FORGEMOVER_BIN_PATH` overrides, see `config/forgemover.php`).
+ForgeMover manages the Brightfish Laravel Forge / DigitalOcean server fleet and relocates Laravel sites between Forge servers. Laravel 13 + Filament v5 (PHP 8.3), port of a legacy single-file dashboard. Self-contained: all relocation logic is native PHP orchestrating bash-over-ssh (`app/Services/RelocationSteps.php`) — no external scripts.
 
 ## Commands
 
@@ -28,7 +28,7 @@ Production-style running: `php artisan serve --port=8600` + `php artisan queue:w
 
 **Relocation domain** — the core feature. A `Relocation` = (source server, site, target server) with 8 steps defined in `app/Enums/RelocationStep.php`:
 
-- 4 **script steps** (`collect → transfer → restore → verify`) run `relocate-laravel.sh` via the queued `RunRelocationStep` job (timeout 7200s, 1 try). Output streams to a per-run log file under the relocation's log directory. **bashew scripts always exit 0** — success is detected by the `"<step> done"` marker appearing in the log, not the exit code.
+- 4 **runnable steps** (`collect → transfer → restore → verify`) execute via the queued `RunRelocationStep` job (timeout 7200s, 1 try), streaming output to a per-run log file under the relocation's log directory. All four are **native PHP** (`app/Services/RelocationSteps.php` — ssh orchestration with embedded remote bash constants, proper exit codes/exceptions), also runnable standalone via `php artisan forgemover:collect|transfer|restore|verify {relocation} [--now]` (queued by default; after deploying code changes run `php artisan queue:restart` or the worker keeps executing old job code). Successful runs store a one-line metrics `summary` on the run row, shown on the wizard step cards.
 - 4 **manual steps** (`preflight`, `forge_site`, `deploy_test`, `cutover`) are checklists: `RelocationCheck` rows keyed `<step>` or `<step>:<subcheck>` (sub-check keys come from `RelocationStep::subChecks()`). The `forge_site` check's note stores the temp domain; ticking `cutover` sets `finished_at`.
 
 `app/Services/RelocationRunner.php` owns the rules: one running step at a time, delete/retarget guards, and retarget's partial reset (source-side progress kept, target-side reset). `app/Services/WizardData.php` assembles everything the wizard page shows — step cards, auto pass/warn/fail verdicts from cached probes, env template, DNS and DB info.

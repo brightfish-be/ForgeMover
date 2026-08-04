@@ -7,9 +7,9 @@ Laravel Forge / DigitalOcean fleet and relocate Laravel sites between servers.
 
 - **Filament v5** admin panel (`/admin`): servers, sites, relocations, package-credential
   copying, fleet dashboard — Font Awesome icons throughout.
-- **Queued jobs** for everything long-running: the 4 script steps of a site relocation
-  (`collect → transfer → restore → verify`, driven by the repo's `bin/relocate-laravel.sh`),
-  ssh fact probes and Forge API syncs.
+- **Queued jobs** for everything long-running: the 4 runnable steps of a site relocation
+  (`collect → transfer → restore → verify`, native ssh orchestration — no external
+  scripts), ssh fact probes and Forge API syncs.
 - **Scheduled tasks**: hourly server probes, 6-hourly Forge sync, daily site-type detection.
 - **Relocation wizard**: the 8-step guided flow (preflight → forge site → collect → transfer →
   restore → deploy test → verify → cutover) with auto-checked preconditions (PHP on target,
@@ -41,8 +41,7 @@ or the three processes by hand: `php artisan serve --port=8600`,
 
 See the `ForgeMover` block in `.env.example`. Secrets: `FORGE_API_TOKEN` (validated at
 setup), `FORGE_ORG` (auto-detected for single-org tokens). ssh access uses `~/.ssh/config`
-host aliases with passwordless keys — server names must match those aliases. The
-operational scripts stay in the repo root `bin/` (override with `FORGEMOVER_BIN_PATH`).
+host aliases with passwordless keys — server names must match those aliases.
 
 ## Tests
 
