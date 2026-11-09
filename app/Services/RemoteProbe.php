@@ -51,7 +51,7 @@ class RemoteProbe
         $script = <<<'SH'
         . /etc/os-release 2>/dev/null; echo "os=$PRETTY_NAME"; echo "osver=$VERSION_ID"
         echo "php=$(ls /usr/bin/php[0-9]* 2>/dev/null | sed 's|/usr/bin/php||' | tr '\n' ' ')"
-        echo "phpdefault=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)"
+        echo "phpdefault=$(php -r 'echo PHP_VERSION;' 2>/dev/null)"
         echo "dbver=$(mysqld --version 2>/dev/null || mariadbd --version 2>/dev/null)"
         echo "redisver=$(redis-server --version 2>/dev/null)"
         echo "cpus=$(nproc 2>/dev/null)"
@@ -175,6 +175,61 @@ class RemoteProbe
         return $this->run($host, $script, 10);
     }
 
+    /**
+     * Can the host read a git repo over ssh? null = host unreachable,
+     * false = the host's SSH key is not authorized for the repo.
+     */
+    public function gitReadable(string $host, string $repo): ?bool
+    {
+        $output = $this->run($host,
+            "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new' "
+            ."git ls-remote '{$repo}' HEAD >/dev/null 2>&1 && echo GIT_OK || echo GIT_FAIL", 25);
+
+        return $output === null ? null : str_contains($output, 'GIT_OK');
+    }
+
+    /**
+     * Web directory of a site relative to its root ("/public", "/_site", "/"),
+     * read from the nginx vhost's root directive on the given server.
+     */
+    public function webDirectory(string $host, string $site, string $user = 'forge'): ?string
+    {
+        $root = $this->run($host, "grep -m1 -E '^\\s*root ' /etc/nginx/sites-available/{$site} 2>/dev/null");
+        if (! $root) {
+            return null;
+        }
+        $path = rtrim(trim(preg_replace('/^\s*root\s+|;.*$/', '', trim($root))), '/');
+        $base = "/home/{$user}/{$site}";
+
+        return str_starts_with($path, $base) ? (substr($path, strlen($base)) ?: '/') : $path;
+    }
+
+    /**
+     * Values of the given .env keys, from the first candidate site dir that has
+     * them. Quotes are stripped. Only pass non-secret keys — values are cached.
+     *
+     * @return array<string, string>|null
+     */
+    public function envValues(string $host, array $candidates, array $keys, string $user = 'forge'): ?array
+    {
+        $pattern = implode('|', $keys);
+        foreach (array_unique($candidates) as $site) {
+            $output = $this->run($host, "grep -E '^({$pattern})=' /home/{$user}/{$site}/.env 2>/dev/null", 10);
+            if ($output === null || $output === '') {
+                continue;
+            }
+            $values = [];
+            foreach (explode("\n", $output) as $line) {
+                [$key, $value] = explode('=', $line, 2);
+                $values[trim($key)] = trim(trim($value), '\'"');
+            }
+
+            return $values;
+        }
+
+        return null;
+    }
+
     /** DB name/user/connection/host + size and table count. Never returns the password. */
     public function dbInfo(string $host, string $site, string $user = 'forge'): ?array
     {
@@ -262,14 +317,43 @@ class RemoteProbe
         return ['ok' => false];
     }
 
-    /** du of site dir + archive listing in /tmp/relocate-<site>. */
-    public function sizes(string $host, array $sites, string $user, string $archiveSite): ?string
+    /**
+     * du of site dir + archive listing in /tmp/relocate-<site>.
+     *
+     * @return array{dirs: list<array{label: string, size: string}>, files: list<array{name: string, bytes: int, mtime: string}>}|null
+     */
+    public function sizes(string $host, array $sites, string $user, string $archiveSite): ?array
     {
         $duCommands = collect($sites)->unique()->map(
             fn (string $site) => "du -sh /home/{$user}/{$site} /home/{$user}/{$site}/storage/app 2>/dev/null"
         )->implode('; ');
+        $output = $this->run($host,
+            "{$duCommands}; echo '--FILES--';"
+            ." find /tmp/relocate-{$archiveSite} -maxdepth 1 -type f -printf '%f\\t%s\\t%Tm-%Td %TH:%TM\\n' 2>/dev/null | sort");
+        if ($output === null) {
+            return null;
+        }
 
-        return $this->run($host, "{$duCommands}; ls -lh /tmp/relocate-{$archiveSite} 2>/dev/null");
+        [$duPart, $filesPart] = array_pad(explode('--FILES--', $output, 2), 2, '');
+        $dirs = [];
+        foreach (explode("\n", trim($duPart)) as $line) {
+            $parts = preg_split('/\s+/', trim($line), 2);
+            if (count($parts) === 2) {
+                $dirs[] = [
+                    'label' => str_ends_with($parts[1], '/storage/app') ? 'storage/app' : basename($parts[1]),
+                    'size' => $parts[0],
+                ];
+            }
+        }
+        $files = [];
+        foreach (explode("\n", trim($filesPart)) as $line) {
+            $parts = explode("\t", trim($line));
+            if (count($parts) === 3) {
+                $files[] = ['name' => $parts[0], 'bytes' => (int) $parts[1], 'mtime' => $parts[2]];
+            }
+        }
+
+        return ['dirs' => $dirs, 'files' => $files];
     }
 
     /** Public IP of the host (via ssh config HostName, falling back to hostname -I). */
@@ -348,7 +432,11 @@ class RemoteProbe
                 $results['composer'] = 'source has no composer auth.json';
             } else {
                 $destAuth = json_decode((string) $this->run($destination, 'cat ~/.config/composer/auth.json 2>/dev/null'), true) ?: [];
-                $merged = json_encode(array_replace_recursive($destAuth, $sourceAuth),
+                // drop empty sections: PHP encodes them as [] but composer's
+                // schema requires objects ("github-oauth": {} decodes to [])
+                $sections = array_filter(array_replace_recursive($destAuth, $sourceAuth),
+                    fn ($section) => $section !== []);
+                $merged = json_encode($sections ?: new \stdClass,
                     JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
                 $results['composer'] = $this->writeRemoteFile($destination,
                     '~/.config/composer/auth.json', $merged, 'mkdir -p ~/.config/composer');

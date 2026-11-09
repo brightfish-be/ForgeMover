@@ -17,8 +17,9 @@ use Symfony\Component\Process\Process;
 class RelocationSteps
 {
     /**
-     * Archive code, storage/app, database and .env of the site on the source
-     * server, into /tmp/relocate-<site>, with a sha256 manifest.
+     * Archive storage/app, database and .env of the site on the source server,
+     * into /tmp/relocate-<site>, with a sha256 manifest. Code is never
+     * collected — it always deploys from the installed git repository.
      */
     protected const COLLECT_SCRIPT = <<<'REMOTE'
     set -euo pipefail
@@ -28,14 +29,25 @@ class RelocationSteps
     work="/tmp/relocate-$site"
 
     [[ -d "$site_dir" ]] || { echo "!! site folder [$site_dir] not found" >&2; exit 1; }
-    [[ -f "$site_dir/.env" ]] || { echo "!! no .env in [$site_dir]" >&2; exit 1; }
+    # start clean: archives of a previous run must not survive into this one
+    if [[ -d "$work" ]]; then
+      echo "... removing stale [$work] from a previous run"
+      rm -rf "$work"
+    fi
     mkdir -p "$work"
 
     # read KEY= from the site's .env, stripping optional surrounding quotes.
     # The inner grep may find nothing — that must not trip set -e/pipefail.
     env_get() { (grep -E "^$1=" "$site_dir/.env" || true) | tail -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//"; }
 
-    cp "$site_dir/.env" "$work/env-$site.txt"
+    # static (HTML-only) sites have no .env and no database
+    has_env=0
+    if [[ -f "$site_dir/.env" ]]; then
+      has_env=1
+      cp "$site_dir/.env" "$work/env-$site.txt"
+    else
+      echo "?? no .env in [$site_dir] - static site? skipping .env and database"
+    fi
 
     # password protection (Forge: Site → Security) does not travel with the site - record it.
     # Only count ENABLED auth_basic: every Forge site has "auth_basic off;" in its
@@ -48,13 +60,14 @@ class RelocationSteps
       printf '%s\n' "$auth_hits" >"$work/nginx-auth-$site.txt"
     fi
 
-    echo "... code -> code-$site.tar.gz (backup only - code is reinstalled from git on the target)"
-    tar czf "$work/code-$site.tar.gz" -C "$site_dir" \
-      --exclude=./vendor --exclude=./node_modules --exclude=./storage --exclude=./.git .
+    if [[ -d "$site_dir/storage/app" ]]; then
+      echo "... storage/app -> storage-app-$site.tar.gz"
+      tar czf "$work/storage-app-$site.tar.gz" -C "$site_dir/storage" app
+    else
+      echo "?? no storage/app in [$site_dir] - skipped (static site?)"
+    fi
 
-    echo "... storage/app -> storage-app-$site.tar.gz"
-    tar czf "$work/storage-app-$site.tar.gz" -C "$site_dir/storage" app
-
+    if [[ $has_env -eq 1 ]]; then
     db_conn=$(env_get DB_CONNECTION)
     db_name=$(env_get DB_DATABASE)
     db_user=$(env_get DB_USERNAME)
@@ -87,8 +100,12 @@ class RelocationSteps
     else
       echo "?? no DB_DATABASE in .env - database dump skipped"
     fi
+    fi
 
     (cd "$work" && find . -maxdepth 1 -type f ! -name 'MANIFEST*' -exec sha256sum {} + >MANIFEST.sha256)
+    if [[ ! -s "$work/MANIFEST.sha256" ]]; then
+      echo "?? nothing to collect (no .env, storage or database) - transfer and restore will be no-ops"
+    fi
     echo
     echo "Collected in [$work]:"
     ls -lh "$work"
@@ -109,28 +126,42 @@ class RelocationSteps
     work="/tmp/relocate-$site"
 
     [[ -d "$work" ]] || { echo "!! [$work] not found - run transfer first" >&2; exit 1; }
-    if [[ ! -f "$site_dir/artisan" ]]; then
-      echo "!! [$site_dir/artisan] not found" >&2
+    if [[ ! -d "$site_dir" ]]; then
+      echo "!! [$site_dir] not found" >&2
       echo "!! create the site in Forge (Server → Sites → Add Site) and install the git repository first" >&2
       echo "!! never hand-copy nginx/supervisor/cron config - Forge must own this site" >&2
       exit 1
     fi
-    [[ -f "$site_dir/.env" ]] || { echo "!! no .env in [$site_dir] - fill in the Forge Environment tab first" >&2; exit 1; }
     me=$(id -un)
     [[ "$me" != "$user" ]] && echo "?? connected as [$me] but site user is [$user] - fix ownership afterwards: chown -R $user:$user $site_dir/storage"
 
-    echo "... restoring storage/app"
-    mkdir -p "$site_dir/storage"
-    tar xzf "$work/storage-app-$site.tar.gz" -C "$site_dir/storage"
+    # a static (HTML-only) site produced no storage archive and no dump — nothing to restore
+    if [[ -f "$work/storage-app-$site.tar.gz" ]]; then
+      if [[ ! -f "$site_dir/artisan" ]]; then
+        echo "!! [$site_dir/artisan] not found" >&2
+        echo "!! create the site in Forge (Server → Sites → Add Site) and install the git repository first" >&2
+        echo "!! never hand-copy nginx/supervisor/cron config - Forge must own this site" >&2
+        exit 1
+      fi
+      echo "... restoring storage/app"
+      mkdir -p "$site_dir/storage"
+      tar xzf "$work/storage-app-$site.tar.gz" -C "$site_dir/storage"
+    else
+      echo "?? no storage archive in [$work] - skipped (static site?)"
+    fi
 
     # import with the credentials Forge created on THIS server (never restore mysql system users)
     env_get() { (grep -E "^$1=" "$site_dir/.env" || true) | tail -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//"; }
-    db_name=$(env_get DB_DATABASE)
-    db_user=$(env_get DB_USERNAME)
-    db_pass=$(env_get DB_PASSWORD)
 
     sqlite_dump=$(ls "$work"/db-*.sqlite.gz 2>/dev/null | head -1 || true)
     dump=$(ls "$work"/db-*.sql.gz 2>/dev/null | head -1 || true)
+    if [[ -z "$sqlite_dump" && -z "$dump" ]]; then
+      echo "?? no database dump in [$work] - import skipped"
+    else
+    [[ -f "$site_dir/.env" ]] || { echo "!! no .env in [$site_dir] - fill in the Forge Environment tab first" >&2; exit 1; }
+    db_name=$(env_get DB_DATABASE)
+    db_user=$(env_get DB_USERNAME)
+    db_pass=$(env_get DB_PASSWORD)
     if [[ -n "$sqlite_dump" ]]; then
       # place the file where the TARGET .env expects it; Laravel default otherwise
       db_conn=$(env_get DB_CONNECTION)
@@ -141,8 +172,6 @@ class RelocationSteps
       mkdir -p "$(dirname "$db_file")"
       gunzip -c "$sqlite_dump" >"$db_file"
       rm -f "$db_file-wal" "$db_file-shm"   # stale WAL/SHM of a previous database
-    elif [[ -z "$dump" ]]; then
-      echo "?? no database dump in [$work] - import skipped"
     elif [[ -z "$db_name" ]]; then
       echo "?? no DB_DATABASE in the target .env - import skipped"
     else
@@ -152,9 +181,14 @@ class RelocationSteps
       MYSQL_PWD="$db_pass" mysql -u "$db_user" -N -B -e \
         "SELECT table_name, table_rows FROM information_schema.tables WHERE table_schema='$db_name' ORDER BY table_rows DESC LIMIT 10;"
     fi
+    fi
 
-    echo "... $php_bin artisan storage:link --force"
-    (cd "$site_dir" && "$php_bin" artisan storage:link --force) || echo "?? storage:link failed - run it manually"
+    if [[ -f "$site_dir/artisan" ]]; then
+      echo "... $php_bin artisan storage:link --force"
+      (cd "$site_dir" && "$php_bin" artisan storage:link --force) || echo "?? storage:link failed - run it manually"
+    else
+      echo "?? no artisan in [$site_dir] - storage:link skipped (static site?)"
+    fi
     REMOTE;
 
     /**
@@ -171,7 +205,11 @@ class RelocationSteps
     [[ -d "$site_dir" ]] || { echo "!! [$site_dir] not found" >&2; exit 1; }
 
     echo "## key .env values on this server:"
-    grep -E '^(APP_URL|APP_ENV|DB_HOST|DB_DATABASE|REDIS_HOST|MAIL_HOST|CACHE_DRIVER|SESSION_DRIVER|QUEUE_CONNECTION)=' "$site_dir/.env" || true
+    if [[ -f "$site_dir/.env" ]]; then
+      grep -E '^(APP_URL|APP_ENV|DB_HOST|DB_DATABASE|REDIS_HOST|MAIL_HOST|CACHE_DRIVER|SESSION_DRIVER|QUEUE_CONNECTION)=' "$site_dir/.env" || true
+    else
+      echo "(no .env - static site?)"
+    fi
     echo
 
     problems=0
@@ -213,7 +251,7 @@ class RelocationSteps
         $site = $relocation->site_name;
         $source = $relocation->sourceServer->name;
         $this->assertReachable($source);
-        $out("Collect [{$site}] on [{$source}]: code, storage/app, database, .env\n");
+        $out("Collect [{$site}] on [{$source}]: storage/app, database, .env (code always deploys from git)\n");
         $this->remote($source, self::COLLECT_SCRIPT, [$site, $relocation->unix_user], $out,
             "collect failed on [{$source}]");
         $out("collect done: archives in /tmp/relocate-{$site} on [{$source}]\n");
@@ -241,17 +279,18 @@ class RelocationSteps
         }
 
         $out("Transfer /tmp/relocate-{$site} from [{$source}] to [{$target}] (relayed via this machine)\n");
+        $out("removing stale /tmp/relocate-{$site} on [{$target}] first\n");
         $startedAt = microtime(true);
         $ssh = implode(' ', $this->sshCommand());
         $pipeline = sprintf('set -o pipefail; %s %s %s | %s %s %s',
             $ssh, escapeshellarg($source), escapeshellarg("tar cf - -C /tmp relocate-{$site}"),
-            $ssh, escapeshellarg($target), escapeshellarg('tar xf - -C /tmp'));
+            $ssh, escapeshellarg($target), escapeshellarg("rm -rf /tmp/relocate-{$site} && tar xf - -C /tmp"));
         $this->run(['bash', '-c', $pipeline], $out, 'transfer failed', timeout: 7200);
         $elapsed = max(microtime(true) - $startedAt, 0.001);
 
         $out("Verifying checksums on [{$target}] ...\n");
         $this->run([...$this->sshCommand($target),
-            "cd /tmp/relocate-{$site} && sha256sum --check --quiet MANIFEST.sha256",
+            "cd /tmp/relocate-{$site} && if [ -s MANIFEST.sha256 ]; then sha256sum --check --quiet MANIFEST.sha256; else echo 'nothing to verify (empty manifest)'; fi",
         ], $out, 'checksum mismatch after transfer - do NOT restore from these files', timeout: 600);
         $out("transfer done, checksums verified on [{$target}]\n");
 
@@ -408,18 +447,18 @@ class RelocationSteps
         return $sizes;
     }
 
-    /** "db 124 MB · storage/app 3.4 MB · code 772 kB" */
+    /** "db 124 MB · storage/app 3.4 MB" */
     protected function sizesSummary(array $sizes): string
     {
         $sum = fn (string $prefix) => collect($sizes)
             ->filter(fn (int $bytes, string $name) => str_starts_with($name, $prefix))
             ->sum();
         $db = $sum('db-');
+        $storage = $sum('storage-app-');
 
         return implode(' · ', [
             'db '.($db ? $this->human($db) : 'none'),
-            'storage/app '.$this->human($sum('storage-app-')),
-            'code '.$this->human($sum('code-')),
+            'storage/app '.($storage ? $this->human($storage) : 'none'),
         ]);
     }
 

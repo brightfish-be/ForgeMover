@@ -3,8 +3,11 @@
 namespace App\Filament\Resources\Relocations\Pages;
 
 use App\Enums\RelocationStep;
+use App\Enums\RunState;
 use App\Filament\Resources\Relocations\RelocationResource;
 use App\Models\Server;
+use App\Models\Setting;
+use App\Services\DnsService;
 use App\Services\RelocationRunner;
 use App\Services\WizardData;
 use Filament\Actions\Action;
@@ -23,10 +26,45 @@ class RelocationWizard extends Page
 
     public string $tempDomain = '';
 
+    public string $dnsManageUrl = '';
+
+    /** "consider this script step handled" ticks for the collect/transfer/restore card */
+    public array $skipSteps = [];
+
     public function mount(int|string $record): void
     {
         $this->record = $this->resolveRecord($record);
         $this->tempDomain = (string) $this->record->temp_domain;
+        foreach (['collect', 'transfer', 'restore'] as $key) {
+            $this->skipSteps[$key] = $this->record->checkDone($key);
+        }
+        if ($ns = $this->primaryNameserver()) {
+            $this->dnsManageUrl = (string) Setting::get('dns_manage:'.DnsService::nsKey($ns));
+        }
+    }
+
+    /** The zone's SOA primary nameserver — the key the manage URL is stored under. */
+    protected function primaryNameserver(): ?string
+    {
+        return app(WizardData::class)->dnsInfo($this->record)['manage_ns'] ?? null;
+    }
+
+    public function saveDnsManageUrl(): void
+    {
+        $url = trim($this->dnsManageUrl);
+        if ($url !== '' && ! filter_var(str_replace('{zone}', 'zone.tld', $url), FILTER_VALIDATE_URL)) {
+            Notification::make()->title('Invalid URL')->danger()->send();
+
+            return;
+        }
+        $ns = $this->primaryNameserver();
+        if (! $ns) {
+            Notification::make()->title('No nameservers known for this domain')->danger()->send();
+
+            return;
+        }
+        Setting::set('dns_manage:'.DnsService::nsKey($ns), $url ?: null);
+        Notification::make()->title("DNS management URL saved for {$ns}")->success()->send();
     }
 
     public function getTitle(): string
@@ -94,6 +132,28 @@ class RelocationWizard extends Page
         }
     }
 
+    /** "Done" on the collect/transfer/restore card: mark unrun-but-ticked steps as skipped. */
+    public function confirmScriptSteps(): void
+    {
+        $record = $this->record->refresh()->load('runs', 'checks');
+        $states = $record->scriptStates();
+        $keys = ['collect', 'transfer', 'restore'];
+        foreach ($keys as $key) {
+            if ($states[$key] !== RunState::Success && ! $record->checkDone($key) && ! ($this->skipSteps[$key] ?? false)) {
+                Notification::make()->title('Tick all three steps first')->danger()->send();
+
+                return;
+            }
+        }
+        $runner = app(RelocationRunner::class);
+        foreach ($keys as $key) {
+            if ($states[$key] !== RunState::Success && ! $record->checkDone($key)) {
+                $runner->setCheck($record, $key, true);
+            }
+        }
+        Notification::make()->title('Collect / Transfer / Restore confirmed')->success()->send();
+    }
+
     public function toggleCheck(string $key, bool $done): void
     {
         app(RelocationRunner::class)->setCheck($this->record->refresh(), $key, $done);
@@ -138,6 +198,9 @@ class RelocationWizard extends Page
 
         return [
             'steps' => $steps,
+            'dnsInfo' => $wizard->dnsInfo($record),
+            'siteInfo' => $wizard->siteInfo($record),
+            'sizes' => $wizard->sizes($record),
             'running' => $running?->value,
             'activeScript' => $activeScript,
             'log' => $latestRun?->logTail() ?? '',

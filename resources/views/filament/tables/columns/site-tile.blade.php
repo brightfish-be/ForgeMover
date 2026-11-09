@@ -1,16 +1,9 @@
 @php
-    /* Forge-style identity tile: pastel initial, hue picked from the site name. */
+    /* Forge-style identity tile: the domain's icon from avatar.qsmd.io (generated avatar when it has none). */
     $name = $getRecord()->name;
-    [$bg, $text] = [
-        ['bg-emerald-50', 'text-emerald-600'],
-        ['bg-orange-50', 'text-orange-600'],
-        ['bg-blue-50', 'text-blue-600'],
-        ['bg-violet-50', 'text-violet-600'],
-        ['bg-rose-50', 'text-rose-600'],
-        ['bg-amber-50', 'text-amber-700'],
-    ][crc32($name) % 6];
 @endphp
 
-<div class="{{ $bg }} {{ $text }} flex h-10 w-10 items-center justify-center rounded-lg text-sm font-semibold uppercase">
-    {{ substr($name, 0, 1) }}
+<div class="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-white/10 dark:bg-white/5">
+    <img src="https://avatar.qsmd.io/domain/{{ rawurlencode($name) }}.webp"
+         alt="" loading="lazy" class="h-7 w-7 object-contain">
 </div>

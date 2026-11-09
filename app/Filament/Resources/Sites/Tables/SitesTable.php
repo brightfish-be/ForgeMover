@@ -6,11 +6,12 @@ use App\Filament\Resources\Relocations\RelocationResource;
 use App\Models\Relocation;
 use App\Models\Server;
 use App\Models\Site;
+use App\Services\FactsService;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
-use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\ViewField;
 use Filament\Support\Enums\FontWeight;
 use Filament\Support\Enums\TextSize;
 use Filament\Support\Enums\Width;
@@ -22,6 +23,8 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\HtmlString;
 
 class SitesTable
 {
@@ -42,17 +45,8 @@ class SitesTable
                             ->searchable()
                             ->sortable(! $compact),
                         TextColumn::make('subtitle')
-                            ->getStateUsing(fn (Site $record) => collect([
-                                $record->repo_url
-                                    ? str($record->repo_url)
-                                        ->replaceMatches('~^(https?://[^/]+/|\w+@[^:]+:)~', '')
-                                        ->beforeLast('.git')
-                                        .($record->repo_branch ? ":{$record->repo_branch}" : '')
-                                    : null,
-                                $record->php_version
-                                    ? 'PHP '.preg_replace('/^PHP\s+/i', '', $record->php_version)
-                                    : null,
-                            ])->filter()->implode(' · ') ?: null)
+                            ->getStateUsing(fn (Site $record) => self::subtitle($record))
+                            ->html()
                             ->placeholder('not probed')
                             ->size(TextSize::Small)
                             ->color('gray')
@@ -103,7 +97,7 @@ class SitesTable
                     Action::make('relocate')
                         ->label('Relocate')
                         ->icon('fas-truck-arrow-right')
-                        ->modalWidth(Width::ExtraLarge)
+                        ->modalWidth(Width::TwoExtraLarge)
                         ->schema(function (Site $record) {
                             $servers = Server::withCount('sites')
                                 ->where('id', '!=', $record->server_id)
@@ -111,22 +105,12 @@ class SitesTable
                                 ->get();
 
                             return [
-                                Radio::make('target_server_id')
+                                ViewField::make('target_server_id')
                                     ->label('Destination server')
-                                    ->options($servers->mapWithKeys(fn (Server $server) => [
-                                        $server->id => $server->name.($server->compromised ? ' ☢ COMPROMISED' : ''),
-                                    ]))
-                                    ->descriptions($servers->mapWithKeys(fn (Server $server) => [
-                                        $server->id => collect([
-                                            $server->os_version ? "Ubuntu {$server->os_version}" : null,
-                                            $server->php_default ? "PHP {$server->php_default}" : null,
-                                            "{$server->sites_count} ".str('site')->plural($server->sites_count),
-                                            $server->disk_pct ? "disk {$server->disk_pct}%" : null,
-                                            $server->destination_only ? 'destination-only' : null,
-                                        ])->filter()->implode(' · '),
-                                    ])->all())
-                                    ->required()
-                                    ->extraAttributes(['class' => 'server-cards']),
+                                    ->view('filament.forms.server-cards')
+                                    ->viewData(['servers' => $servers])
+                                    ->in($servers->pluck('id')->all())
+                                    ->required(),
                                 TextInput::make('unix_user')
                                     ->default($record->site_user ?: config('forgemover.default_user'))
                                     ->required(),
@@ -152,5 +136,32 @@ class SitesTable
                 ]),
             ])
             ->toolbarActions([]);
+    }
+
+    /** "owner/repo:branch · PHP x.y" — the PHP part is a red pill when that version reaches EOL within 2 years. */
+    private static function subtitle(Site $record): ?HtmlString
+    {
+        $repo = $record->repo_url
+            ? str($record->repo_url)
+                ->replaceMatches('~^(https?://[^/]+/|\w+@[^:]+:)~', '')
+                ->beforeLast('.git')
+                .($record->repo_branch ? ":{$record->repo_branch}" : '')
+            : null;
+
+        $php = null;
+        if ($record->php_version) {
+            $version = preg_replace('/^PHP\s+/i', '', $record->php_version);
+            $eol = FactsService::phpEolDate($version);
+            $php = sprintf(
+                '<span class="%s" title="%s">PHP %s</span>',
+                FactsService::phpEolSoon($version) ? 'eol-pill' : '',
+                e($eol ? 'PHP EOL '.Carbon::parse($eol)->format('M Y') : 'PHP version unknown'),
+                e($version),
+            );
+        }
+
+        $parts = array_filter([$repo !== null ? e($repo) : null, $php]);
+
+        return $parts ? new HtmlString(implode(' · ', $parts)) : null;
     }
 }

@@ -50,6 +50,14 @@ class Server extends Model
         return $date ? ['date' => $date, 'eol' => $date < now()->toDateString()] : null;
     }
 
+    /** True when the Ubuntu release is unknown or reaches EOL within $years — a poor relocation target. */
+    public function osEolSoon(int $years = 2): bool
+    {
+        $date = $this->osEol()['date'] ?? null;
+
+        return $date === null || $date < now()->addYears($years)->toDateString();
+    }
+
     public function uptimePretty(): string
     {
         $s = (int) $this->uptime_s;

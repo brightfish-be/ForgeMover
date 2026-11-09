@@ -40,7 +40,7 @@ enum RelocationStep: string
             self::Preflight => ['php', 'key', 'dns', 'jobs'],
             self::ForgeSite => ['source', 'repo', 'db', 'domain', 'composer', 'deploykey', 'webdir', 'php', 'isolation', 'zdd', 'env'],
             self::DeployTest => ['storagelink'],
-            self::Cutover => ['dnslive'],
+            self::Cutover => ['dnslive', 'tls', 'https', 'default', 'env'],
             default => [],
         };
     }

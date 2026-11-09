@@ -43,4 +43,18 @@ class FactsService
 
         return $date === null || $date < now()->toDateString();
     }
+
+    /** EOL date for a PHP version ("8.3" or "8.3.36"), null when unknown. */
+    public static function phpEolDate(string $version): ?string
+    {
+        return self::PHP_EOL[implode('.', array_slice(explode('.', $version), 0, 2))] ?? null;
+    }
+
+    /** True when the PHP version is unknown or reaches EOL within $years. */
+    public static function phpEolSoon(string $version, int $years = 2): bool
+    {
+        $date = self::phpEolDate($version);
+
+        return $date === null || $date < now()->addYears($years)->toDateString();
+    }
 }

@@ -41,6 +41,10 @@ it('renders the relocation list, create form and wizard', function () {
     $this->get("/admin/relocations/{$relocation->id}")
         ->assertOk()
         ->assertSee('Preflight checks')
+        ->assertSee('Collect archives')
+        ->assertSee('Transfer to target')
+        ->assertSee('Restore on target')
+        ->assertSee('sizes fetched')
         ->assertSee('Cutover');
 });
 

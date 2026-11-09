@@ -41,9 +41,11 @@
 
 /*
  * Radio options styled as Forge-like selectable cards — used by the
- * relocate action's destination-server picker (.server-cards).
+ * relocate action's destination-server picker (.server-cards,
+ * resources/views/filament/forms/server-cards.blade.php).
  */
 .server-cards.fi-fo-radio {
+    display: grid;
     margin-top: 0 !important;
     gap: 0.5rem;
 }
@@ -58,11 +60,93 @@
 }
 
 .server-cards.fi-fo-radio > .fi-fo-radio-label:hover {
-    border-color: oklch(0.871 0.006 286.286); /* zinc-300 */
-    background-color: oklch(0.985 0 0);
+    filter: brightness(0.98);
+}
+
+.server-cards.fi-fo-radio > .fi-fo-radio-label {
+    display: flex;
+    gap: 0.75rem;
+}
+
+/* Current Ubuntu: green card. EOL within 2 years (or unknown): gray card. */
+.server-cards.fi-fo-radio > .server-card-current {
+    border-color: oklch(0.845 0.143 164.978); /* emerald-300 */
+    background-color: oklch(0.979 0.021 166.113); /* emerald-50 */
+}
+
+.server-cards.fi-fo-radio > .server-card-eol {
+    background-color: oklch(0.967 0.001 286.375); /* zinc-100 */
+}
+
+.server-cards.fi-fo-radio > .server-card-eol .fi-fo-radio-label-text,
+.server-cards.fi-fo-radio > .server-card-eol .fi-fo-radio-label-text p {
+    color: oklch(0.552 0.016 285.938); /* zinc-500 */
 }
 
 .server-cards.fi-fo-radio > .fi-fo-radio-label:has(.fi-radio-input:checked) {
-    border-color: oklch(0.696 0.17 162.48); /* emerald-500 */
-    background-color: oklch(0.979 0.021 166.113); /* emerald-50 */
+    outline: 2px solid oklch(0.596 0.145 163.225); /* emerald-600 */
+    outline-offset: -1px;
+}
+
+.server-cards.fi-fo-radio > .server-card-eol:has(.fi-radio-input:checked) {
+    outline-color: oklch(0.552 0.016 285.938); /* zinc-500 */
+}
+
+/* Card subtitle: " · "-separated specs; vCPU / RAM / SSD shown as "<n><icon>" with the full value on hover. */
+.server-card-specs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 0.7em;
+}
+
+.server-card-specs > span {
+    position: relative;
+}
+
+/* Absolutely positioned so the dot sits in the gap, outside any pill background. */
+.server-card-specs > span:not(:first-child)::before {
+    font-weight: 400;
+    content: '·';
+    position: absolute;
+    left: -0.35em; /* half the column-gap */
+    transform: translateX(-50%);
+    color: oklch(0.552 0.016 285.938); /* zinc-500 */
+}
+
+.server-card-specs svg {
+    display: inline-block;
+    width: 0.85em;
+    height: 0.85em;
+    margin-left: 0.2em;
+    vertical-align: -0.1em;
+    fill: currentColor;
+}
+
+/* Ubuntu / PHP version reaching EOL within 2 years: red pill (relocate cards, sites list). */
+.eol-pill {
+    padding: 0 0.45em;
+    border-radius: 999px;
+    background-color: oklch(0.936 0.032 17.717); /* red-100 */
+    color: oklch(0.505 0.213 27.518); /* red-700 */
+    font-weight: 500;
+}
+
+/*
+ * Header-less split rows (DESIGN.md §3.3): when a column in the row has its own
+ * url, Filament wraps each other column in a full-width record link, which
+ * squeezes the name stack to the right. Size links to their content, let the
+ * growable column take the free space, and drop the link padding in stacks so
+ * name and subtitle line up.
+ */
+.fi-ta-split > .fi-ta-record-content {
+    width: auto;
+}
+
+.fi-ta-split > .fi-growable:not(.fi-ta-col) {
+    flex: 1 1 0%;
+}
+
+.fi-ta-split .fi-ta-stack > .fi-ta-record-content {
+    padding-inline: 0;
 }

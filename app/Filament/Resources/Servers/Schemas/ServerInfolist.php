@@ -56,7 +56,7 @@ class ServerInfolist
                                     ->placeholder('—')
                                     ->formatStateUsing(fn (Server $record) => new HtmlString(
                                         '<strong>'.e($record->php_default).'</strong>'
-                                        .(($others = array_diff($record->php_versions ?? [], [$record->php_default]))
+                                        .(($others = array_diff($record->php_versions ?? [], [preg_replace('/^(\d+\.\d+).*/', '$1', $record->php_default)]))
                                             ? ' <span class="text-gray-400">· '.e(implode(' · ', $others)).'</span>'
                                             : '')
                                     ))

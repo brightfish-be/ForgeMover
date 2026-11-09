@@ -77,7 +77,10 @@ class Relocation extends Model
     public function stepDone(RelocationStep $step): bool
     {
         if ($step->isScript()) {
-            return $this->scriptStates()[$step->value] === RunState::Success;
+            // a check row on a script step = manually marked done ("skipped",
+            // e.g. nothing to transfer for an HTML-only site)
+            return $this->scriptStates()[$step->value] === RunState::Success
+                || $this->checkDone($step->value);
         }
 
         return $this->checkDone($step->value);
